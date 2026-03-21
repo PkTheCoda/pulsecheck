@@ -1,22 +1,15 @@
-import { useState } from 'react'
-import Homepage from './Pages/Homepage'
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import TeacherBuilderPage from "./Pages/TeacherBuilderPage";
 
 
 function App() {
-
   return (
-    <>
-      <BrowserRouter>
-        <Routes>
-          <Route 
-            index
-            element={<Homepage />}
-          />
-        </Routes>
-      </BrowserRouter>
-    </>
-  )
+    <BrowserRouter>
+      <Routes>
+        <Route index element={<TeacherBuilderPage />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
