@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { collection, deleteDoc, doc, onSnapshot, query, where } from "firebase/firestore";
 import toast from "react-hot-toast";
-import { FiBarChart2, FiCopy, FiEdit3, FiFileText, FiLogOut, FiPlusCircle, FiTrash2 } from "react-icons/fi";
+import { FiBarChart2, FiCopy, FiEdit3, FiFileText, FiLogOut, FiPlusCircle, FiTrash2, FiZap } from "react-icons/fi";
 import { signOutTeacher } from "../lib/auth";
 import { db } from "../lib/firebase";
 
@@ -129,6 +129,13 @@ export default function TeacherDashboardPage({ user }) {
                   >
                     <FiBarChart2 />
                     Responses
+                  </Link>
+                  <Link
+                    to={`/dashboard/quiz/${quiz.id}/insights`}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700"
+                  >
+                    <FiZap />
+                    AI Insights
                   </Link>
                   <button
                     className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs text-white"

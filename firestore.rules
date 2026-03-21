@@ -24,6 +24,17 @@ service cloud.firestore {
       allow read: if signedIn() && isOwner(resource.data.ownerId);
       allow update, delete: if false;
     }
+
+    match /aiInsights/{quizId} {
+      allow create: if signedIn() && isOwner(request.resource.data.ownerId);
+      allow read, update, delete: if signedIn() && isOwner(resource.data.ownerId);
+    }
+
+    match /studyGuides/{quizId} {
+      allow get: if true;
+      allow create: if signedIn() && isOwner(request.resource.data.ownerId);
+      allow read, update, delete: if signedIn() && isOwner(resource.data.ownerId);
+    }
   }
 }
 
