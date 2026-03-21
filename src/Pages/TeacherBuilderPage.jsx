@@ -22,21 +22,39 @@ function makeAccessCode() {
   return `${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
+const BUILTIN_TAG_KEYS = ["concept", "subTopic", "cognitiveLevel", "misconceptionKey"];
+
 function normalizeQuestions(questions) {
-  return questions.map((q, idx) => ({
-    id: q.id || `q${idx + 1}`,
-    text: q.text || "",
-    options: Array.isArray(q.options) ? q.options.slice(0, 4) : ["", "", "", ""],
-    correctAnswerIndex:
-      typeof q.correctAnswerIndex === "number" ? q.correctAnswerIndex : 0,
-    tags: {
+  return questions.map((q, idx) => {
+    const builtin = {
       concept: q?.tags?.concept || "",
       subTopic: q?.tags?.subTopic || "",
       cognitiveLevel: q?.tags?.cognitiveLevel || "Recall",
       misconceptionKey: q?.tags?.misconceptionKey || "",
-    },
-    aiRationale: q.aiRationale || "",
-  }));
+    };
+    const custom = { ...q?.tags };
+    BUILTIN_TAG_KEYS.forEach((k) => delete custom[k]);
+    return {
+      id: q.id || `q${idx + 1}`,
+      text: q.text || "",
+      options: Array.isArray(q.options) ? q.options.slice(0, 4) : ["", "", "", ""],
+      correctAnswerIndex:
+        typeof q.correctAnswerIndex === "number" ? q.correctAnswerIndex : 0,
+      tags: { ...builtin, ...custom },
+      aiRationale: q.aiRationale || "",
+    };
+  });
+}
+
+function createEmptyQuestion() {
+  return {
+    id: `q${Date.now()}`,
+    text: "",
+    options: ["", "", "", ""],
+    correctAnswerIndex: 0,
+    tags: { concept: "", subTopic: "", cognitiveLevel: "Recall", misconceptionKey: "" },
+    aiRationale: "",
+  };
 }
 
 export default function TeacherBuilderPage({ user }) {
@@ -56,13 +74,19 @@ export default function TeacherBuilderPage({ user }) {
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [isLoadingQuiz, setIsLoadingQuiz] = useState(false);
+  const [hasGenerated, setHasGenerated] = useState(false);
 
   const canGenerate = useMemo(() => {
     return Boolean(title.trim() && geminiApiKey.trim() && (sourceFile || sourceTextOverride.trim()));
   }, [title, geminiApiKey, sourceFile, sourceTextOverride]);
 
   const canSave = useMemo(() => {
-    return Boolean(user?.uid && title.trim() && questions.length > 0);
+    if (!user?.uid || !title.trim() || questions.length === 0) return false;
+    return questions.every(
+      (q) =>
+        (q.text || "").trim() &&
+        (q.options || []).every((o) => (o || "").trim())
+    );
   }, [user, title, questions]);
 
   if (!user) return <Navigate to="/signin" replace />;
@@ -89,7 +113,9 @@ export default function TeacherBuilderPage({ user }) {
         setTitle(quiz.title || "");
         setPassword(quiz?.settings?.password || "");
         setTimerMinutes(quiz?.settings?.timer || 30);
-        setQuestions(normalizeQuestions(quiz.questions || []));
+        const qs = normalizeQuestions(quiz.questions || []);
+        setQuestions(qs);
+        if (qs.length > 0) setHasGenerated(true);
         setTeacherNotes(quiz.teacherNotes || "");
         setInstructions(quiz.instructions || "");
         setStatus(`Editing quiz: ${snap.id}`);
@@ -131,6 +157,8 @@ export default function TeacherBuilderPage({ user }) {
       });
 
       setQuestions(normalizeQuestions(generated));
+      setHasGenerated(true);
+      setActiveTab("questions");
       setStatus(`Generated ${generated.length} questions. You can now save.`);
       toast.success(`Generated ${generated.length} questions`);
     } catch (error) {
@@ -240,189 +268,460 @@ export default function TeacherBuilderPage({ user }) {
     });
   }
 
+  function removeTag(index, key) {
+    setQuestions((prev) => {
+      const next = [...prev];
+      const tags = { ...next[index].tags };
+      delete tags[key];
+      next[index] = { ...next[index], tags };
+      return next;
+    });
+  }
+
+  function addQuestion() {
+    setQuestions((prev) => [...prev, createEmptyQuestion()]);
+  }
+
+  function deleteQuestion(index) {
+    setQuestions((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  const [activeTab, setActiveTab] = useState("details");
+  const [addTagModal, setAddTagModal] = useState(null); // { questionIndex }
+  const [newTagKey, setNewTagKey] = useState("");
+
+  function openAddTagModal(questionIndex) {
+    setAddTagModal({ questionIndex });
+    setNewTagKey("");
+  }
+
+  function closeAddTagModal() {
+    setAddTagModal(null);
+    setNewTagKey("");
+  }
+
+  function submitAddTag() {
+    if (!addTagModal || !newTagKey.trim()) return;
+    const key = newTagKey.trim().replace(/\s+/g, "_").toLowerCase();
+    if (BUILTIN_TAG_KEYS.includes(key)) return;
+    const q = questions[addTagModal.questionIndex];
+    if (q?.tags && key in q.tags) return;
+    updateTag(addTagModal.questionIndex, key, "");
+    closeAddTagModal();
+  }
+
+  const inputBase =
+    "w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
+  const labelBase = "mb-1 block text-xs font-medium uppercase tracking-wide text-gray-600";
+
   return (
-    <div className="min-h-screen bg-slate-100 p-6 text-slate-900">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <header className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm">
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
+      <div className="mx-auto max-w-4xl px-6 py-8">
+        {/* Header + Sticky Tabs */}
+        <div className="sticky top-0 z-10 -mx-6 -mt-2 bg-gray-100 px-6 pb-2 pt-2">
+          <header className="mb-4 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Quiz Builder</h1>
-            <p className="text-sm text-slate-600">
-              {isEditing
-                ? "Edit your quiz and update the live version."
-                : "Build fast checks from source files with AI, then save to your account."}
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
+              PulseCheck
+            </h1>
+            <p className="mt-0.5 text-sm text-gray-500">
+              {isEditing ? "Edit your quiz and update the live version." : "Build fast checks from source files with AI."}
             </p>
           </div>
-          <div className="flex gap-2">
-            <Link to="/dashboard" className="rounded-lg border border-slate-300 px-4 py-2 text-sm">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">
+              {user.displayName || user.email}
+            </span>
+            <Link
+              to="/dashboard"
+              className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
               My Quizzes
             </Link>
             <button
               onClick={signOutTeacher}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+              className="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
             >
               Sign out
             </button>
           </div>
         </header>
 
-        <section className="grid gap-4 rounded-2xl bg-white p-4 shadow-sm md:grid-cols-2">
-          <div className="rounded border bg-slate-50 p-2 text-sm text-slate-700">
-            Signed in as: {user.displayName || user.email}
-          </div>
-          <input
-            className="rounded border p-2"
-            placeholder="Quiz title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <input
-            className="rounded border p-2"
-            placeholder="Optional password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <input
-            className="rounded border p-2"
-            type="number"
-            min="1"
-            placeholder="Timer (minutes)"
-            value={timerMinutes}
-            onChange={(e) => setTimerMinutes(e.target.value)}
-          />
-          <input
-            className="rounded border p-2"
-            type="number"
-            min="1"
-            max="30"
-            placeholder="Question count"
-            value={questionCount}
-            onChange={(e) => setQuestionCount(e.target.value)}
-          />
-          <div className="rounded border bg-slate-50 p-2 text-sm text-slate-700">
-            Gemini API key loaded from env: {geminiApiKey ? "yes" : "no"}
-          </div>
-          <div className="md:col-span-2">
-            <input
-              className="w-full rounded border p-2"
-              type="file"
-              accept=".pdf,.txt,.md,.csv"
-              onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
-            />
-          </div>
-          <textarea
-            className="min-h-36 rounded border p-2 md:col-span-2"
-            placeholder="Optional: paste source text (used if no file or as fallback)"
-            value={sourceTextOverride}
-            onChange={(e) => setSourceTextOverride(e.target.value)}
-          />
-          <textarea
-            className="min-h-24 rounded border p-2 md:col-span-2"
-            placeholder="Student instructions (shown on the welcome page)"
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-          />
-          <textarea
-            className="min-h-24 rounded border p-2 md:col-span-2"
-            placeholder="Optional teacher notes (shown in your dashboard/reporting later)"
-            value={teacherNotes}
-            onChange={(e) => setTeacherNotes(e.target.value)}
-          />
-          <div className="flex gap-2 md:col-span-2">
+          {/* Tabs + Save */}
+          <div className="flex items-end justify-between border-b border-gray-200 bg-gray-100">
+            <nav className="-mb-px flex gap-6">
+              <button
+                onClick={() => setActiveTab("details")}
+                className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
+                  activeTab === "details"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                }`}
+              >
+                Details
+              </button>
+              <button
+                onClick={() => setActiveTab("questions")}
+                className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
+                  activeTab === "questions"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                }`}
+              >
+                Questions {questions.length > 0 && `(${questions.length})`}
+              </button>
+            </nav>
             <button
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-white disabled:bg-slate-300"
-              disabled={!canGenerate || isGenerating}
-              onClick={handleGenerate}
+              className="-mb-px mb-2 rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+              disabled={!canSave || isSaving}
+              onClick={handleSaveQuiz}
             >
-              {isGenerating ? "Generating..." : "Generate Questions"}
+              {isSaving ? "Saving..." : isEditing ? "Update Quiz Draft" : "Save Quiz Draft"}
             </button>
           </div>
-          <p className="text-sm text-slate-700 md:col-span-2">
-            {isLoadingQuiz ? "Loading quiz..." : status}
-          </p>
-        </section>
+        </div>
 
-        <section className="space-y-4">
-          <h2 className="text-xl font-semibold">Generated Questions ({questions.length})</h2>
-          {questions.length === 0 && (
-            <div className="rounded bg-white p-4 text-sm text-slate-600 shadow-sm">
-              No questions yet.
-            </div>
-          )}
-          {questions.map((q, idx) => (
-            <div key={`${q.id}-${idx}`} className="space-y-3 rounded-2xl bg-white p-4 shadow-sm">
-              <p className="text-sm font-semibold text-slate-600">Question {idx + 1}</p>
-              <textarea
-                className="min-h-20 w-full rounded border p-2"
-                value={q.text}
-                onChange={(e) => updateQuestionText(idx, e.target.value)}
+        {/* Details Tab */}
+        {activeTab === "details" && (
+          <div className="space-y-6">
+            {/* Title */}
+            <div>
+              <label className={labelBase}>Title</label>
+              <input
+                type="text"
+                className={inputBase}
+                placeholder="e.g. History Overview"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
               />
-              <div className="grid gap-2 md:grid-cols-2">
-                {q.options.map((option, optionIdx) => (
+            </div>
+
+            {/* Quiz Instructions */}
+            <div>
+              <label className={labelBase}>Quiz Instructions</label>
+              <textarea
+                className={`${inputBase} min-h-[120px] resize-y`}
+                placeholder="Instructions shown to students on the welcome page..."
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                {instructions.split(/\s+/).filter(Boolean).length} words
+              </p>
+            </div>
+
+            {/* Quiz Settings */}
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
+                Quiz Settings
+              </h3>
+              <div className="space-y-4">
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div>
+                    <label className={labelBase}>Quiz Type</label>
+                    <select
+                      className={inputBase}
+                      value="graded"
+                      readOnly
+                    >
+                      <option value="graded">Graded Quiz</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelBase}>Time Limit (minutes)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className={inputBase}
+                      value={timerMinutes}
+                      onChange={(e) => setTimerMinutes(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="rounded border border-gray-200 bg-gray-50 p-4">
+                  <label className={labelBase}>Require access code</label>
                   <input
-                    key={`${q.id}-${optionIdx}`}
-                    className="rounded border p-2"
-                    value={option}
-                    onChange={(e) => updateOption(idx, optionIdx, e.target.value)}
-                    placeholder={`Option ${optionIdx + 1}`}
+                    type="text"
+                    className={`${inputBase} max-w-xs`}
+                    placeholder="Leave blank for no password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                   />
-                ))}
-              </div>
-              <div className="grid gap-2 md:grid-cols-4">
-                <select
-                  className="rounded border p-2"
-                  value={q.correctAnswerIndex}
-                  onChange={(e) =>
-                    setQuestions((prev) => {
-                      const next = [...prev];
-                      next[idx] = {
-                        ...next[idx],
-                        correctAnswerIndex: Number(e.target.value),
-                      };
-                      return next;
-                    })
-                  }
-                >
-                  <option value={0}>Correct: Option 1</option>
-                  <option value={1}>Correct: Option 2</option>
-                  <option value={2}>Correct: Option 3</option>
-                  <option value={3}>Correct: Option 4</option>
-                </select>
-                <input
-                  className="rounded border p-2"
-                  value={q.tags.concept}
-                  onChange={(e) => updateTag(idx, "concept", e.target.value)}
-                  placeholder="Concept"
-                />
-                <input
-                  className="rounded border p-2"
-                  value={q.tags.subTopic}
-                  onChange={(e) => updateTag(idx, "subTopic", e.target.value)}
-                  placeholder="Sub-topic"
-                />
-                <select
-                  className="rounded border p-2"
-                  value={q.tags.cognitiveLevel}
-                  onChange={(e) => updateTag(idx, "cognitiveLevel", e.target.value)}
-                >
-                  <option>Recall</option>
-                  <option>Understanding</option>
-                  <option>Application</option>
-                </select>
+                </div>
               </div>
             </div>
-          ))}
-          {questions.length > 0 && (
-            <div className="pt-2">
-              <button
-                className="rounded-lg bg-emerald-600 px-5 py-3 text-white disabled:bg-slate-300"
-                disabled={!canSave || isSaving}
-                onClick={handleSaveQuiz}
-              >
-                {isSaving ? "Saving..." : isEditing ? "Update Quiz Draft" : "Save Quiz Draft"}
-              </button>
+
+            {/* Source Content */}
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
+                Source Content
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className={labelBase}>Upload file (PDF, TXT, MD, CSV)</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.md,.csv"
+                    className={`${inputBase} cursor-pointer file:mr-4 file:rounded file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-700`}
+                    onChange={(e) => setSourceFile(e.target.files?.[0] || null)}
+                  />
+                  {sourceFile && (
+                    <p className="mt-1 text-xs text-gray-600">{sourceFile.name}</p>
+                  )}
+                </div>
+                <div>
+                  <label className={labelBase}>Or paste source text</label>
+                  <textarea
+                    className={`${inputBase} min-h-[140px] resize-y`}
+                    placeholder="Paste content from your materials (used if no file or as fallback)"
+                    value={sourceTextOverride}
+                    onChange={(e) => setSourceTextOverride(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
-          )}
-        </section>
+
+            {/* AI Generation */}
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
+                AI Generation
+              </h3>
+              <div className="space-y-4">
+                <div className="max-w-[200px]">
+                  <label className={labelBase}>Question count</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="30"
+                    className={inputBase}
+                    value={questionCount}
+                    onChange={(e) => setQuestionCount(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <button
+                    className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                    disabled={!canGenerate || isGenerating || hasGenerated}
+                    onClick={handleGenerate}
+                  >
+                    {isGenerating ? "Generating..." : hasGenerated ? "Already generated" : "Generate Questions"}
+                  </button>
+                  <span className="text-xs text-gray-500">
+                    API key: {geminiApiKey ? "✓ Loaded" : "✗ Missing"}
+                  </span>
+                </div>
+                {status && (
+                  <p className="text-xs text-gray-600">{isLoadingQuiz ? "Loading quiz..." : status}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Teacher Notes */}
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
+                Teacher Notes
+              </h3>
+              <textarea
+                className={`${inputBase} min-h-[80px] resize-y`}
+                placeholder="Private notes for your dashboard and reporting (not shown to students)"
+                value={teacherNotes}
+                onChange={(e) => setTeacherNotes(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Questions Tab */}
+        {activeTab === "questions" && (
+          <div className="space-y-6">
+            {questions.length === 0 ? (
+              <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
+                <p className="text-sm text-gray-500">No questions yet.</p>
+                <p className="mt-1 text-xs text-gray-400">Add source content and generate questions from the Details tab.</p>
+                <button
+                  onClick={() => setActiveTab("details")}
+                  className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  Go to Details →
+                </button>
+              </div>
+            ) : (
+              <>
+                {questions.map((q, idx) => {
+                  const customTagEntries = Object.entries(q.tags || {}).filter(
+                    ([k]) => !BUILTIN_TAG_KEYS.includes(k)
+                  );
+                  return (
+                  <div
+                    key={`${q.id}-${idx}`}
+                    className="rounded-lg border border-gray-200 bg-white p-6"
+                  >
+                    <div className="mb-4 flex items-center justify-between border-b border-gray-100 pb-3">
+                      <span className="text-sm font-semibold text-gray-700">
+                        Question {idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => deleteQuestion(idx)}
+                        className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        aria-label="Delete question"
+                        title="Delete question"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                    <textarea
+                      className={`${inputBase} mb-4 min-h-[72px]`}
+                      value={q.text}
+                      onChange={(e) => updateQuestionText(idx, e.target.value)}
+                      placeholder="Question text"
+                    />
+                    <div className="mb-4 space-y-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Answer choices (click circle for correct)</p>
+                      {q.options.map((option, optionIdx) => (
+                        <div
+                          key={`${q.id}-${optionIdx}`}
+                          className="flex items-center gap-3"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQuestions((prev) => {
+                                const next = [...prev];
+                                next[idx] = {
+                                  ...next[idx],
+                                  correctAnswerIndex: optionIdx,
+                                };
+                                return next;
+                              })
+                            }
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-gray-400 transition-colors hover:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label={`Mark option ${String.fromCharCode(65 + optionIdx)} as correct`}
+                          >
+                            {q.correctAnswerIndex === optionIdx && (
+                              <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                            )}
+                          </button>
+                          <input
+                            className={`${inputBase} flex-1`}
+                            value={option}
+                            onChange={(e) => updateOption(idx, optionIdx, e.target.value)}
+                            placeholder={`Option ${String.fromCharCode(65 + optionIdx)}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-3 border-t border-gray-100 pt-4">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Tags</p>
+                      <div className="flex flex-wrap gap-3">
+                        <input
+                          className={`${inputBase} max-w-[180px]`}
+                          value={q.tags.concept || ""}
+                          onChange={(e) => updateTag(idx, "concept", e.target.value)}
+                          placeholder="Concept"
+                        />
+                        <input
+                          className={`${inputBase} max-w-[180px]`}
+                          value={q.tags.subTopic || ""}
+                          onChange={(e) => updateTag(idx, "subTopic", e.target.value)}
+                          placeholder="Sub-topic"
+                        />
+                        <select
+                          className={`${inputBase} max-w-[140px]`}
+                          value={q.tags.cognitiveLevel || "Recall"}
+                          onChange={(e) => updateTag(idx, "cognitiveLevel", e.target.value)}
+                        >
+                          <option>Recall</option>
+                          <option>Understanding</option>
+                          <option>Application</option>
+                        </select>
+                        {customTagEntries.map(([k]) => (
+                          <span
+                            key={k}
+                            className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700"
+                          >
+                            {k}
+                            <button
+                              type="button"
+                              onClick={() => removeTag(idx, k)}
+                              className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                              aria-label={`Remove tag ${k}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => openAddTagModal(idx)}
+                          className="rounded border border-dashed border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 hover:border-gray-400 hover:bg-gray-50"
+                        >
+                          + Add tag
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );})}
+                <div className="flex justify-center border-t border-gray-200 pt-8">
+                  <button
+                    type="button"
+                    onClick={addQuestion}
+                    className="rounded border border-dashed border-gray-300 bg-white px-6 py-4 text-sm font-medium text-gray-600 transition-colors hover:border-gray-400 hover:bg-gray-50"
+                  >
+                    + Add Question
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Add Tag Modal */}
+        {addTagModal !== null && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={closeAddTagModal}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-700">
+                Add Custom Tag
+              </h3>
+              <div>
+                <label className={labelBase}>Tag name</label>
+                <input
+                  type="text"
+                  className={inputBase}
+                  placeholder="e.g. chapter, unit"
+                  value={newTagKey}
+                  onChange={(e) => setNewTagKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitAddTag()}
+                />
+              </div>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeAddTagModal}
+                  className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitAddTag}
+                  disabled={!newTagKey.trim()}
+                  className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                >
+                  Add Tag
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
