@@ -15,7 +15,14 @@ service cloud.firestore {
 
     match /quizzes/{quizId} {
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow get: if true;
       allow read, update, delete: if isOwner(resource.data.ownerId);
+    }
+
+    match /submissions/{submissionId} {
+      allow create: if true;
+      allow read: if signedIn() && isOwner(resource.data.ownerId);
+      allow update, delete: if false;
     }
   }
 }

@@ -1,11 +1,22 @@
 import { useMemo, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
-import { addDoc, arrayUnion, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { Link, Navigate, useParams } from "react-router-dom";
+import {
+  addDoc,
+  arrayUnion,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import toast from "react-hot-toast";
 import { signOutTeacher } from "../lib/auth";
 import { db, storage } from "../lib/firebase";
 import { extractPdfText } from "../lib/pdf";
 import { generateQuestionsWithGemini } from "../lib/gemini";
+import { useEffect } from "react";
 
 function makeAccessCode() {
   return `${Math.floor(100000 + Math.random() * 900000)}`;
@@ -29,18 +40,22 @@ function normalizeQuestions(questions) {
 }
 
 export default function TeacherBuilderPage({ user }) {
+  const { quizId } = useParams();
+  const isEditing = Boolean(quizId);
   const [title, setTitle] = useState("");
   const [password, setPassword] = useState("");
   const [timerMinutes, setTimerMinutes] = useState(30);
   const [questionCount, setQuestionCount] = useState(10);
   const geminiApiKey = import.meta.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || "";
   const [teacherNotes, setTeacherNotes] = useState("");
+  const [instructions, setInstructions] = useState("");
   const [sourceFile, setSourceFile] = useState(null);
   const [sourceTextOverride, setSourceTextOverride] = useState("");
   const [questions, setQuestions] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [isLoadingQuiz, setIsLoadingQuiz] = useState(false);
 
   const canGenerate = useMemo(() => {
     return Boolean(title.trim() && geminiApiKey.trim() && (sourceFile || sourceTextOverride.trim()));
@@ -51,6 +66,42 @@ export default function TeacherBuilderPage({ user }) {
   }, [user, title, questions]);
 
   if (!user) return <Navigate to="/signin" replace />;
+
+  useEffect(() => {
+    async function loadQuiz() {
+      if (!user || !quizId) return;
+      try {
+        setIsLoadingQuiz(true);
+        const quizRef = doc(db, "quizzes", quizId);
+        const snap = await getDoc(quizRef);
+
+        if (!snap.exists()) {
+          toast.error("Quiz not found.");
+          return;
+        }
+
+        const quiz = snap.data();
+        if (quiz.ownerId !== user.uid) {
+          toast.error("You do not have access to this quiz.");
+          return;
+        }
+
+        setTitle(quiz.title || "");
+        setPassword(quiz?.settings?.password || "");
+        setTimerMinutes(quiz?.settings?.timer || 30);
+        setQuestions(normalizeQuestions(quiz.questions || []));
+        setTeacherNotes(quiz.teacherNotes || "");
+        setInstructions(quiz.instructions || "");
+        setStatus(`Editing quiz: ${snap.id}`);
+      } catch (error) {
+        toast.error(error.message || "Failed to load quiz.");
+      } finally {
+        setIsLoadingQuiz(false);
+      }
+    }
+
+    loadQuiz();
+  }, [quizId, user]);
 
   async function getSourceText(file) {
     if (!file) return sourceTextOverride.trim();
@@ -81,8 +132,10 @@ export default function TeacherBuilderPage({ user }) {
 
       setQuestions(normalizeQuestions(generated));
       setStatus(`Generated ${generated.length} questions. You can now save.`);
+      toast.success(`Generated ${generated.length} questions`);
     } catch (error) {
       setStatus(error.message || "Failed to generate quiz.");
+      toast.error(error.message || "Failed to generate quiz.");
     } finally {
       setIsGenerating(false);
     }
@@ -103,42 +156,59 @@ export default function TeacherBuilderPage({ user }) {
         sourceUrl = await getDownloadURL(storageRef);
       }
 
-      const accessCode = makeAccessCode();
-      const docRef = await addDoc(collection(db, "quizzes"), {
+      const basePayload = {
         ownerId: user.uid,
         userId: user.uid,
         teacherId: user.uid,
         teacherName: user.displayName || user.email || "Teacher",
         title: title.trim(),
-        accessCode,
         sourceUrl,
         questions,
         status: "draft",
         teacherNotes: teacherNotes.trim(),
+        instructions: instructions.trim(),
         settings: {
           password: password.trim(),
           timer: Number(timerMinutes) || 30,
         },
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      };
 
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          uid: user.uid,
-          email: user.email || "",
-          displayName: user.displayName || "",
-          quizIds: arrayUnion(docRef.id),
-          updatedAt: serverTimestamp(),
+      if (quizId) {
+        await updateDoc(doc(db, "quizzes", quizId), basePayload);
+        const liveLink = `${window.location.origin}/quiz/${quizId}`;
+        await updateDoc(doc(db, "quizzes", quizId), { liveLink });
+        setStatus(`Updated draft quiz: ${quizId}`);
+        toast.success("Quiz updated.");
+      } else {
+        const accessCode = makeAccessCode();
+        const docRef = await addDoc(collection(db, "quizzes"), {
+          ...basePayload,
+          accessCode,
           createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+        });
 
-      setStatus(`Saved draft quiz. quizId: ${docRef.id}, accessCode: ${accessCode}`);
+        const liveLink = `${window.location.origin}/quiz/${docRef.id}`;
+        await updateDoc(doc(db, "quizzes", docRef.id), { liveLink });
+
+        await setDoc(
+          doc(db, "users", user.uid),
+          {
+            uid: user.uid,
+            email: user.email || "",
+            displayName: user.displayName || "",
+            quizIds: arrayUnion(docRef.id),
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        setStatus(`Saved draft quiz. quizId: ${docRef.id}, accessCode: ${accessCode}`);
+        toast.success("Draft saved.");
+      }
     } catch (error) {
       setStatus(error.message || "Failed to save quiz.");
+      toast.error(error.message || "Failed to save quiz.");
     } finally {
       setIsSaving(false);
     }
@@ -177,7 +247,9 @@ export default function TeacherBuilderPage({ user }) {
           <div>
             <h1 className="text-3xl font-bold">Quiz Builder</h1>
             <p className="text-sm text-slate-600">
-              Build fast checks from source files with AI, then save to your account.
+              {isEditing
+                ? "Edit your quiz and update the live version."
+                : "Build fast checks from source files with AI, then save to your account."}
             </p>
           </div>
           <div className="flex gap-2">
@@ -245,6 +317,12 @@ export default function TeacherBuilderPage({ user }) {
           />
           <textarea
             className="min-h-24 rounded border p-2 md:col-span-2"
+            placeholder="Student instructions (shown on the welcome page)"
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+          />
+          <textarea
+            className="min-h-24 rounded border p-2 md:col-span-2"
             placeholder="Optional teacher notes (shown in your dashboard/reporting later)"
             value={teacherNotes}
             onChange={(e) => setTeacherNotes(e.target.value)}
@@ -258,7 +336,9 @@ export default function TeacherBuilderPage({ user }) {
               {isGenerating ? "Generating..." : "Generate Questions"}
             </button>
           </div>
-          <p className="text-sm text-slate-700 md:col-span-2">{status}</p>
+          <p className="text-sm text-slate-700 md:col-span-2">
+            {isLoadingQuiz ? "Loading quiz..." : status}
+          </p>
         </section>
 
         <section className="space-y-4">
@@ -338,7 +418,7 @@ export default function TeacherBuilderPage({ user }) {
                 disabled={!canSave || isSaving}
                 onClick={handleSaveQuiz}
               >
-                {isSaving ? "Saving..." : "Save Quiz Draft"}
+                {isSaving ? "Saving..." : isEditing ? "Update Quiz Draft" : "Save Quiz Draft"}
               </button>
             </div>
           )}
