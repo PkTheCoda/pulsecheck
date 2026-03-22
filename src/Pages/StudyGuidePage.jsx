@@ -13,13 +13,10 @@ export default function StudyGuidePage() {
     async function loadGuide() {
       try {
         const snap = await getDoc(doc(db, "studyGuides", quizId));
-        if (!snap.exists()) {
-          setError("Study guide not found yet.");
-          return;
-        }
+        if (!snap.exists()) { setError("Study guide not found yet."); return; }
         setGuide(snap.data());
-      } catch (loadError) {
-        setError(loadError.message || "Failed to load study guide.");
+      } catch (e) {
+        setError(e.message || "Failed to load study guide.");
       } finally {
         setLoading(false);
       }
@@ -27,37 +24,92 @@ export default function StudyGuidePage() {
     loadGuide();
   }, [quizId]);
 
-  if (loading) return <div className="p-6 text-sm text-slate-700">Loading study guide...</div>;
-  if (error) return <div className="p-6 text-sm text-rose-600">{error}</div>;
+  if (loading) return <div className="p-6 text-sm text-gray-600">Loading study guide...</div>;
+  if (error) return <div className="p-6 text-sm text-red-600">{error}</div>;
 
   const sg = guide?.studyGuide;
+
   return (
-    <div className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-3xl space-y-4">
-        <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Study Guide</p>
-          <h1 className="text-2xl font-bold text-slate-900">{guide?.quizTitle}</h1>
-          <p className="mt-1 text-sm text-slate-600">From {guide?.teacherName || "your teacher"}</p>
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
+      <div className="mx-auto max-w-3xl px-6 py-8">
+
+        {/* Header */}
+        <header className="mb-6">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Study Guide</p>
+          <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-gray-900">{guide?.quizTitle}</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Prepared by {guide?.teacherName || "your teacher"}
+          </p>
         </header>
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">{sg?.title || "Class Study Guide"}</h2>
-          <p className="mt-2 text-slate-700">{sg?.overview}</p>
+
+        {/* Overview */}
+        <div className="rounded-lg border border-gray-200 bg-white p-5">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-700">
+            {sg?.title || "Class Study Guide"}
+          </h2>
+          <p className="text-sm leading-relaxed text-gray-700">{sg?.overview}</p>
+        </div>
+
+        {/* Sections */}
+        {(sg?.sections || []).length > 0 && (
           <div className="mt-4 space-y-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Review Topics</p>
             {(sg?.sections || []).map((section, idx) => (
-              <div key={`section-${idx}`} className="rounded-xl border border-slate-200 p-3">
-                <p className="font-semibold text-slate-900">{section.topic}</p>
-                <p className="mt-1 text-sm text-slate-700">{section.whyItMatters}</p>
-                <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
-                  {(section.whatToReview || []).map((point, pIdx) => (
-                    <li key={`review-${idx}-${pIdx}`}>{point}</li>
-                  ))}
-                </ul>
+              <div key={idx} className="rounded-lg border border-gray-200 bg-white p-5">
+                <div className="border-b border-gray-100 pb-3 mb-3">
+                  <p className="font-semibold text-gray-900">{section.topic}</p>
+                  <p className="mt-1 text-sm text-gray-600">{section.whyItMatters}</p>
+                </div>
+                {(section.whatToReview || []).length > 0 && (
+                  <div className="mb-3">
+                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">What to Review</p>
+                    <ul className="space-y-1">
+                      {section.whatToReview.map((point, pIdx) => (
+                        <li key={pIdx} className="flex items-start gap-2 text-sm text-gray-700">
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {(section.practiceTips || []).length > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Practice Tips</p>
+                    <ul className="space-y-1">
+                      {section.practiceTips.map((tip, tIdx) => (
+                        <li key={tIdx} className="flex items-start gap-2 text-sm text-gray-700">
+                          <span className="mt-0.5 shrink-0 text-emerald-500">✓</span>
+                          {tip}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-        </section>
+        )}
+
+        {/* Quick Quiz */}
+        {(sg?.quickQuiz || []).length > 0 && (
+          <div className="mt-4 rounded-lg border border-gray-200 bg-white p-5">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-700">Quick Self-Check</p>
+            <div className="space-y-3">
+              {sg.quickQuiz.map((item, idx) => (
+                <div key={idx} className="rounded border border-gray-200 bg-gray-50 p-3">
+                  <p className="text-sm font-medium text-gray-800">{item.prompt}</p>
+                  <p className="mt-1 text-xs text-gray-500">Hint: {item.answerHint}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <p className="mt-6 text-center text-xs text-gray-400">
+          Generated by PulseCheck · Share this page with students for review
+        </p>
       </div>
     </div>
   );
 }
-

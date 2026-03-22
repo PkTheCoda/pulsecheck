@@ -106,10 +106,16 @@ Output schema:
     "priorityConcepts": ["string"],
     "reteachNow": ["string"]
   },
+  "classSentiment": {
+    "label": "Well-Calibrated|Overconfident|Underconfident|Struggling",
+    "headline": "one sentence describing the class mood and engagement patterns",
+    "recommendation": "one specific, actionable thing the teacher should do next based on sentiment"
+  },
   "studentActions": [
     {
       "studentName": "string",
       "needsSupport": true,
+      "riskLevel": "high|medium|low",
       "focusAreas": ["string"],
       "actionPlan": "string"
     }
