@@ -169,7 +169,7 @@ export default function Hero({ user }) {
       </section>
 
       {/* ── Social proof strip ───────────────────────────────────────────────── */}
-      <section className="border-y border-gray-100 bg-gray-50 px-6 py-5">
+      {/* <section className="border-y border-gray-100 bg-gray-50 px-6 py-5">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-x-10 gap-y-2 text-sm text-gray-400">
           {["No setup required", "Real-time responses", "Per-student AI plans", "Free to start"].map((item) => (
             <span key={item} className="flex items-center gap-2">
@@ -178,10 +178,10 @@ export default function Hero({ user }) {
             </span>
           ))}
         </div>
-      </section>
+      </section> */}
 
       {/* ── Features ─────────────────────────────────────────────────────────── */}
-      <section className="bg-gray-50 px-6 py-20">
+      {/* <section className="bg-gray-50 px-6 py-20">
         <div className="mx-auto max-w-5xl">
           <div className="mb-12 max-w-lg">
             <h2 className="font-outfit text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
@@ -209,10 +209,10 @@ export default function Hero({ user }) {
             ))}
           </div>
         </div>
-      </section>
+      </section> */}
 
       {/* ── CTA ──────────────────────────────────────────────────────────────── */}
-      <section className="px-6 py-24">
+      <section className="px-6 py-24 bg-gray-50">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-outfit text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
             Ready to see what your class actually knows?
