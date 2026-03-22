@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import SignInPage from "./Pages/SignInPage";
 import TeacherBuilderPage from "./Pages/TeacherBuilderPage";
@@ -9,6 +9,7 @@ import StudentQuizPage from "./Pages/StudentQuizPage";
 import TeacherResponsesPage from "./Pages/TeacherResponsesPage";
 import TeacherInsightsPage from "./Pages/TeacherInsightsPage";
 import StudyGuidePage from "./Pages/StudyGuidePage";
+import Homepage from "./Pages/Homepage";
 import { auth } from "./lib/firebase";
 
 
@@ -33,7 +34,8 @@ function App() {
     <BrowserRouter>
       <Toaster position="top-right" />
       <Routes>
-        <Route index element={<Navigate to={user ? "/dashboard" : "/signin"} replace />} />
+        <Route index element={<Homepage user={user} />} />
+        <Route path="/home" element={<Homepage user={user} />} />
         <Route path="/signin" element={<SignInPage user={user} />} />
         <Route path="/builder" element={<TeacherBuilderPage user={user} />} />
         <Route path="/builder/:quizId" element={<TeacherBuilderPage user={user} />} />

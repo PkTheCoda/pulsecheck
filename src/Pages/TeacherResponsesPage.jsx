@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, query, setDoc, serverTimestamp, where } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ScatterChart, Scatter, Cell,
+} from "recharts";
+import toast from "react-hot-toast";
+import { FiRefreshCw, FiShare2 } from "react-icons/fi";
 import { db } from "../lib/firebase";
+import { generateInsightsWithGemini } from "../lib/gemini";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,111 +41,128 @@ function LoadingSpinner() {
   );
 }
 
-/** SVG normal-distribution dot plot */
-function ScoreDistributionChart({ submissions, totalQuestions }) {
-  const scores = useMemo(() => submissions.map((s) => s.score || 0), [submissions]);
-  if (!scores.length || !totalQuestions) return null;
+/** Score distribution bar chart (histogram) */
+function ScoreHistogram({ submissions, totalQuestions }) {
+  const { data, mean } = useMemo(() => {
+    if (!submissions.length || !totalQuestions) return { data: [], mean: 0 };
+    const counts = {};
+    for (let i = 0; i <= totalQuestions; i++) counts[i] = 0;
+    submissions.forEach((s) => { counts[s.score || 0]++; });
+    const m = submissions.reduce((a, s) => a + (s.score || 0), 0) / submissions.length;
+    return {
+      data: Object.entries(counts).map(([score, count]) => ({
+        score: `${score}/${totalQuestions}`, rawScore: Number(score), count,
+      })),
+      mean: m,
+    };
+  }, [submissions, totalQuestions]);
 
-  const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const variance = scores.reduce((a, b) => a + (b - mean) ** 2, 0) / scores.length;
-  const stdDev = Math.sqrt(variance);
+  if (!data.length) return null;
 
-  // Stack students with same score
-  const stacks = {};
-  submissions.forEach((s) => {
-    const sc = s.score || 0;
-    if (!stacks[sc]) stacks[sc] = [];
-    stacks[sc].push(s.studentName || "?");
-  });
-  const maxStack = Math.max(...Object.values(stacks).map((a) => a.length));
-
-  const W = 640, DOT_R = 10, DOT_GAP = 3;
-  const PAD = { top: 24, right: 28, bottom: 44, left: 28 };
-  const innerW = W - PAD.left - PAD.right;
-  // Height: enough for the tallest stack
-  const dotAreaH = maxStack * (DOT_R * 2 + DOT_GAP) + DOT_R;
-  const H = PAD.top + Math.max(dotAreaH, 80) + PAD.bottom;
-
-  const xScale = (sc) => PAD.left + (sc / totalQuestions) * innerW;
-  // Dots stack upward from the axis
-  const yForDot = (stackIdx) => H - PAD.bottom - stackIdx * (DOT_R * 2 + DOT_GAP) - DOT_R;
-
-  // Bell curve
-  function pdf(x) {
-    if (stdDev < 0.01) return 0;
-    return Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
-  }
-  const steps = 120;
-  const curvePts = Array.from({ length: steps + 1 }, (_, i) => {
-    const x = (i / steps) * totalQuestions;
-    return { x, y: pdf(x) };
-  });
-  const maxPDF = Math.max(...curvePts.map((p) => p.y), 0.001);
-  // Map PDF y to SVG y: curve fills upper portion above dot area
-  const curveAreaH = Math.max(dotAreaH * 0.5, 40);
-  const yCurve = (y) => PAD.top + curveAreaH - (y / maxPDF) * curveAreaH;
-
-  const pathD = curvePts.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x).toFixed(1)} ${yCurve(p.y).toFixed(1)}`).join(" ");
-  const fillD = `${pathD} L ${xScale(totalQuestions).toFixed(1)} ${yCurve(0).toFixed(1)} L ${xScale(0).toFixed(1)} ${yCurve(0).toFixed(1)} Z`;
-
-  // Tick marks (integer scores)
-  const ticks = Array.from({ length: totalQuestions + 1 }, (_, i) => i);
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+        <p className="font-medium text-gray-900">Score: {payload[0]?.payload?.score}</p>
+        <p className="text-gray-500">{payload[0]?.value} student{payload[0]?.value !== 1 ? "s" : ""}</p>
+      </div>
+    );
+  };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: "visible" }}>
-      {/* Bell curve fill */}
-      {stdDev > 0.01 && (
-        <>
-          <path d={fillD} fill="#e0e7ff" fillOpacity="0.6" />
-          <path d={pathD} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeOpacity="0.5" />
-        </>
-      )}
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data} margin={{ top: 10, right: 16, bottom: 20, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+        <XAxis dataKey="score" tick={{ fontSize: 11, fill: "#9ca3af" }} />
+        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#9ca3af" }} width={28} />
+        <Tooltip content={<CustomTooltip />} />
+        <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+          {data.map((entry) => (
+            <Cell
+              key={entry.score}
+              fill={entry.rawScore === Math.round(mean) ? "#2563eb" : "#3b82f6"}
+            />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
 
-      {/* Mean dashed line */}
-      {stdDev > 0 && (
-        <>
-          <line
-            x1={xScale(mean).toFixed(1)} y1={PAD.top}
-            x2={xScale(mean).toFixed(1)} y2={H - PAD.bottom}
-            stroke="#9ca3af" strokeWidth="1" strokeDasharray="4,3"
-          />
-          <text x={xScale(mean).toFixed(1)} y={PAD.top - 6} textAnchor="middle" fontSize="10" fill="#9ca3af">
-            avg {mean.toFixed(1)}
-          </text>
-        </>
-      )}
+/** Confidence vs. score scatter chart */
+function ConfidenceScatterChart({ submissions, totalQuestions }) {
+  const data = useMemo(() => submissions.map((s) => {
+    const ans = s.answers || [];
+    const avgConf = ans.length ? ans.reduce((a, x) => a + (x.confidence || 3), 0) / ans.length : 3;
+    const scorePct = totalQuestions ? Math.round(((s.score || 0) / totalQuestions) * 100) : 0;
+    return { avgConfidence: Number(avgConf.toFixed(2)), scorePct, name: s.studentName || "?" };
+  }), [submissions, totalQuestions]);
 
-      {/* X axis */}
-      <line x1={PAD.left} y1={H - PAD.bottom} x2={W - PAD.right} y2={H - PAD.bottom} stroke="#e5e7eb" strokeWidth="1" />
-      {ticks.map((sc) => (
-        <g key={sc}>
-          <line x1={xScale(sc)} y1={H - PAD.bottom} x2={xScale(sc)} y2={H - PAD.bottom + 4} stroke="#d1d5db" strokeWidth="1" />
-          <text x={xScale(sc)} y={H - PAD.bottom + 15} textAnchor="middle" fontSize="10" fill="#9ca3af">{sc}</text>
-        </g>
-      ))}
-      <text x={W / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="#9ca3af">Score</text>
+  if (!data.length) return null;
 
-      {/* Student dots — stacked per score */}
-      {Object.entries(stacks).map(([sc, names]) =>
-        names.map((name, stackIdx) => {
-          const cx = xScale(Number(sc));
-          const cy = yForDot(stackIdx);
-          return (
-            <g key={`${sc}-${stackIdx}`}>
-              <circle cx={cx} cy={cy} r={DOT_R} fill="#3b82f6" stroke="white" strokeWidth="1.5" />
-              <text x={cx} y={cy + 3.5} textAnchor="middle" fontSize="7.5" fill="white" fontWeight="600">
-                {name.slice(0, 4)}
-              </text>
-              {stackIdx === 0 && (
-                <text x={cx} y={H - PAD.bottom + 28} textAnchor="middle" fontSize="9" fill="#6b7280">
-                  {sc}
-                </text>
-              )}
-            </g>
-          );
-        })
-      )}
-    </svg>
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0]?.payload;
+    return (
+      <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+        <p className="font-semibold text-gray-900">{d?.name}</p>
+        <p className="text-gray-500">Avg confidence: {d?.avgConfidence?.toFixed(1)}</p>
+        <p className="text-gray-500">Score: {d?.scorePct}%</p>
+      </div>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+        <XAxis
+          type="number" dataKey="avgConfidence" name="Avg Confidence"
+          domain={[1, 5]} tickCount={5}
+          tick={{ fontSize: 11, fill: "#9ca3af" }}
+          label={{ value: "Avg Confidence →", position: "insideBottom", offset: -14, fontSize: 11, fill: "#9ca3af" }}
+        />
+        <YAxis
+          type="number" dataKey="scorePct" name="Score %"
+          domain={[0, 100]} tickFormatter={(v) => `${v}%`}
+          tick={{ fontSize: 11, fill: "#9ca3af" }} width={36}
+        />
+        <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3" }} />
+        <Scatter data={data} fill="#3b82f6" fillOpacity={0.85} />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Avg time per question bar chart */
+function QuestionTimeChart({ questionStats }) {
+  const data = questionStats.map((q) => ({
+    name: `Q${q.questionIndex + 1}`,
+    avgTime: Math.round(q.avgTime),
+  }));
+
+  if (!data.length) return null;
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+        <p className="font-medium text-gray-900">{label}</p>
+        <p className="text-gray-500">Avg time: {payload[0]?.value}s</p>
+      </div>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart data={data} margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#9ca3af" }} />
+        <YAxis tickFormatter={(v) => `${v}s`} tick={{ fontSize: 11, fill: "#9ca3af" }} width={36} />
+        <Tooltip content={<CustomTooltip />} />
+        <Bar dataKey="avgTime" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -176,6 +200,51 @@ function Collapsible({ title, defaultOpen = false, children, badge }) {
   );
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+function getCalibration(answers) {
+  if (!answers?.length) return null;
+  const avgAcc = answers.reduce((a, x) => a + (x.isCorrect ? 1 : 0), 0) / answers.length;
+  const avgConf = answers.reduce((a, x) => a + (x.confidence || 3), 0) / answers.length / 5;
+  const diff = avgConf - avgAcc;
+  if (diff > 0.15) return { label: "Overconfident", color: "amber" };
+  if (diff < -0.15) return { label: "Underconfident", color: "blue" };
+  return { label: "Well-calibrated", color: "emerald" };
+}
+
+function exportCSV(submissions, quiz) {
+  if (!submissions.length) return;
+  const questions = quiz?.questions || [];
+  const headers = [
+    "Student Name", "Score", "Score %",
+    ...questions.flatMap((_, i) => [`Q${i + 1} Answer`, `Q${i + 1} Correct?`, `Q${i + 1} Confidence`, `Q${i + 1} Time (s)`]),
+  ];
+  const rows = submissions.map((s) => [
+    s.studentName || "Unnamed",
+    `${s.score ?? 0}/${questions.length}`,
+    questions.length ? `${Math.round(((s.score || 0) / questions.length) * 100)}%` : "0%",
+    ...questions.flatMap((q, i) => {
+      const a = s.answers?.[i];
+      return [
+        typeof a?.chosenIndex === "number" ? q.options[a.chosenIndex] : "No answer",
+        a ? (a.isCorrect ? "Yes" : "No") : "",
+        a?.confidence ?? "",
+        a?.timeSpentSeconds ?? "",
+      ];
+    }),
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(quiz?.title || "quiz").replace(/[^a-z0-9]/gi, "_")}_responses.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function TeacherResponsesPage({ user }) {
@@ -188,7 +257,8 @@ export default function TeacherResponsesPage({ user }) {
   const [viewMode, setViewMode] = useState("summary");
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
-  const [selectedPlanStudentId, setSelectedPlanStudentId] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const geminiApiKey = import.meta.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || "";
 
   useEffect(() => {
     async function loadQuiz() {
@@ -279,6 +349,15 @@ export default function TeacherResponsesPage({ user }) {
     count: (s.answers || []).filter((a) => !a.isCorrect && Number(a.timeSpentSeconds) < 3).length,
   })).filter((r) => r.count > 0).sort((a, b) => b.count - a.count).map((r) => ({ ...r, flagged: r.count > 2 })), [submissions]);
 
+  const percentileMap = useMemo(() => {
+    if (!submissions.length) return {};
+    const sorted = [...submissions].sort((a, b) => (a.score || 0) - (b.score || 0));
+    return Object.fromEntries(submissions.map((s) => {
+      const rank = sorted.filter((x) => (x.score || 0) < (s.score || 0)).length;
+      return [s.id, Math.round((rank / submissions.length) * 100)];
+    }));
+  }, [submissions]);
+
   const studentsByQuestion = useMemo(() => {
     const q = quiz?.questions?.[selectedQuestionIndex];
     if (!q) return { correct: [], incorrect: [] };
@@ -291,26 +370,61 @@ export default function TeacherResponsesPage({ user }) {
     return { correct, incorrect };
   }, [quiz, submissions, selectedQuestionIndex]);
 
-  // ── Student Plan data (joins submissions + AI insights) ──────────────────
-
   const rendered = insights?.insights;
 
-  const studentPlanData = useMemo(() => {
-    const aiActions = rendered?.studentActions || [];
-    const riskOrder = { high: 0, medium: 1, low: 2 };
-    return submissions.map((s) => {
-      const ai = aiActions.find((a) => a.studentName === s.studentName);
-      return { ...s, ai: ai || null, needsSupport: ai?.needsSupport || false, riskLevel: ai?.riskLevel || null, focusAreas: ai?.focusAreas || [], actionPlan: ai?.actionPlan || null };
-    }).sort((a, b) => {
-      if (a.needsSupport && !b.needsSupport) return -1;
-      if (!a.needsSupport && b.needsSupport) return 1;
-      const ra = riskOrder[a.riskLevel] ?? 3, rb = riskOrder[b.riskLevel] ?? 3;
-      if (ra !== rb) return ra - rb;
-      return (a.score || 0) - (b.score || 0);
-    });
-  }, [submissions, rendered]);
+  // Lean analytics payload for Gemini — only sends wrong answers per student
+  const analyticsPayload = useMemo(() => {
+    if (!quiz || !submissions.length) return null;
+    const questions = quiz.questions || [];
+    return {
+      quizTitle: quiz.title || "",
+      responseCount: submissions.length,
+      questions: questions.map((q, qi) => ({
+        label: `Q${qi + 1}`,
+        text: q.text.slice(0, 80),
+        concept: q?.tags?.concept || "Uncategorized",
+        correctRate: questionStats[qi] ? Math.round(questionStats[qi].correctRate) : 0,
+        avgConf: questionStats[qi] ? Number(questionStats[qi].avgConf.toFixed(1)) : 0,
+      })),
+      students: submissions.map((s) => ({
+        name: s.studentName || "Unnamed",
+        score: `${s.score ?? 0}/${questions.length}`,
+        highConfWrong: (s.answers || []).filter((a) => !a.isCorrect && Number(a.confidence) >= 4).length,
+        wrongAnswers: questions.map((q, qi) => {
+          const a = s.answers?.[qi];
+          if (!a || a.isCorrect) return null;
+          return { q: `Q${qi + 1}`, chose: typeof a.chosenIndex === "number" ? q.options[a.chosenIndex] : "?", concept: q?.tags?.concept || "" };
+        }).filter(Boolean),
+      })),
+    };
+  }, [quiz, submissions, questionStats]);
 
-  const selectedPlanStudent = studentPlanData.find((s) => s.id === selectedPlanStudentId) || studentPlanData[0];
+  async function handleGenerate() {
+    if (!geminiApiKey) { toast.error("Missing GEMINI_API_KEY / VITE_GEMINI_API_KEY in environment."); return; }
+    if (!quiz || !analyticsPayload) return;
+    try {
+      setGenerating(true);
+      const result = await generateInsightsWithGemini({
+        apiKey: geminiApiKey,
+        quizTitle: quiz.title,
+        teacherName: quiz.teacherName || "",
+        analyticsPayload,
+      });
+      const payload = { ownerId: quiz.ownerId, quizId, generatedAt: serverTimestamp(), insights: result };
+      await setDoc(doc(db, "aiInsights", quizId), payload, { merge: true });
+      await setDoc(doc(db, "studyGuides", quizId), {
+        ownerId: quiz.ownerId, quizId, quizTitle: quiz.title,
+        teacherName: quiz.teacherName || "", generatedAt: serverTimestamp(),
+        studyGuide: result?.studyGuide || null,
+      }, { merge: true });
+      setInsights(payload);
+      toast.success("AI analysis complete.");
+    } catch (e) {
+      toast.error(e.message || "Failed to generate insights.");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   // ─── early returns ────────────────────────────────────────────────────────
 
@@ -323,7 +437,7 @@ export default function TeacherResponsesPage({ user }) {
     { id: "summary", label: "Summary" },
     { id: "question", label: "Question Drill" },
     { id: "individual", label: "Individual" },
-    { id: "studentplan", label: "Student Plans" },
+    { id: "studyguide", label: rendered?.studyGuide ? "Study Guide" : "Study Guide" },
   ];
 
   return (
@@ -341,7 +455,21 @@ export default function TeacherResponsesPage({ user }) {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Link to={`/dashboard/quiz/${quizId}/insights`} className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">AI Insights</Link>
+              <button
+                onClick={handleGenerate}
+                disabled={generating || submissions.length === 0}
+                className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+              >
+                <FiRefreshCw className={generating ? "animate-spin" : ""} />
+                {generating ? "Analyzing…" : insights ? "Re-analyze" : "Analyze with AI"}
+              </button>
+              <button
+                onClick={() => exportCSV(submissions, quiz)}
+                disabled={!submissions.length}
+                className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Export CSV
+              </button>
               <Link to="/dashboard" className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">← Dashboard</Link>
             </div>
           </div>
@@ -394,6 +522,70 @@ export default function TeacherResponsesPage({ user }) {
                   ))}
                 </motion.div>
 
+                {/* Class Pulse */}
+                {submissions.length > 0 && (() => {
+                  const accuracyScore = summary.totalQ > 0 ? (summary.avgScore / summary.totalQ) * 100 : 0;
+                  const calibDiff = summary.totalQ > 0 ? Math.abs((summary.avgConf / 5) - (summary.avgScore / summary.totalQ)) * 100 : 0;
+                  const calibBonus = Math.max(0, 100 - calibDiff * 1.5);
+                  const outlierPenalty = stdAlerts.flagged.length * 8;
+                  const pulse = Math.round(Math.max(0, Math.min(100, accuracyScore * 0.6 + calibBonus * 0.25 - outlierPenalty)));
+                  const pulseLabel = pulse >= 75 ? "Ready to advance" : pulse >= 50 ? "On track, some gaps" : "Needs reteaching";
+                  const pulseColor = pulse >= 75 ? "text-emerald-600" : pulse >= 50 ? "text-amber-600" : "text-red-600";
+                  const pulseBg = pulse >= 75 ? "border-emerald-200 bg-emerald-50" : pulse >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+                  const barColor = pulse >= 75 ? "bg-emerald-500" : pulse >= 50 ? "bg-amber-400" : "bg-red-500";
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className={`rounded-lg border p-5 ${pulseBg}`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-6">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Class Pulse</p>
+                          <p className={`mt-1 text-5xl font-bold tabular-nums ${pulseColor}`}>{pulse}</p>
+                          <p className="mt-0.5 text-sm font-medium text-gray-600">{pulseLabel}</p>
+                          <p className="mt-1 text-xs text-gray-400">Synthesizes accuracy, calibration, and outliers</p>
+                        </div>
+                        <div className="flex-1" style={{ minWidth: 160 }}>
+                          <div className="h-3 w-full overflow-hidden rounded-full bg-white/70">
+                            <motion.div
+                              className={`h-3 rounded-full ${barColor}`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pulse}%` }}
+                              transition={{ duration: 0.8, ease: "easeOut" }}
+                            />
+                          </div>
+                          <div className="mt-1.5 flex justify-between text-xs text-gray-400">
+                            <span>0 · Reteach</span>
+                            <span>100 · Advance</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* AI Class Snapshot inline */}
+                      {rendered?.classSummary && (
+                        <div className="mt-4 border-t border-current/10 pt-4 space-y-2">
+                          <p className="border-l-2 border-blue-500 pl-3 text-sm font-medium text-gray-800">
+                            {rendered.classSummary.headline}
+                          </p>
+                          {rendered.classSummary.readinessVerdict && (
+                            <p className="pl-3 text-xs text-gray-500">{rendered.classSummary.readinessVerdict}</p>
+                          )}
+                          <div className="flex flex-wrap gap-1.5 pl-3">
+                            {(rendered.classSummary.priorityConcepts || []).map((c, i) => (
+                              <span key={i} className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{c}</span>
+                            ))}
+                            {(rendered.classSummary.reteachNow || []).map((r, i) => (
+                              <span key={i} className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-700">⚠ {r}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  );
+                })()}
+
                 {/* Score Distribution */}
                 {submissions.length > 0 && (
                   <motion.div
@@ -403,10 +595,8 @@ export default function TeacherResponsesPage({ user }) {
                     className="rounded-lg border border-gray-200 bg-white p-5"
                   >
                     <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-700">Score Distribution</h3>
-                    <p className="mb-4 text-xs text-gray-400">Each dot is a student. Hover for name. Bell curve shows class distribution.</p>
-                    <div className="overflow-x-auto">
-                      <ScoreDistributionChart submissions={submissions} totalQuestions={quiz?.questions?.length || 0} />
-                    </div>
+                    <p className="mb-4 text-xs text-gray-400">Bar height = number of students at that score. Darker bar = class average.</p>
+                    <ScoreHistogram submissions={submissions} totalQuestions={quiz?.questions?.length || 0} />
                     <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-400">
                       <span>Mean: <strong className="text-gray-700">{stdAlerts.mean.toFixed(2)}</strong></span>
                       <span>Std Dev: <strong className="text-gray-700">{stdAlerts.stdDev.toFixed(2)}</strong></span>
@@ -451,6 +641,34 @@ export default function TeacherResponsesPage({ user }) {
                       })}
                     </div>
                   </motion.div>
+                )}
+
+                {/* Time + Confidence scatter — 2 col */}
+                {submissions.length > 0 && (
+                  <div className="grid gap-5 md:grid-cols-2">
+                    {questionStats.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2, delay: 0.2 }}
+                        className="rounded-lg border border-gray-200 bg-white p-5"
+                      >
+                        <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-700">Avg Time per Question</h3>
+                        <p className="mb-4 text-xs text-gray-400">Questions that took longest may indicate difficulty or confusion.</p>
+                        <QuestionTimeChart questionStats={questionStats} />
+                      </motion.div>
+                    )}
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2, delay: 0.25 }}
+                      className="rounded-lg border border-gray-200 bg-white p-5"
+                    >
+                      <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-700">Confidence vs. Score</h3>
+                      <p className="mb-4 text-xs text-gray-400">Top-left = underconfident. Bottom-right = overconfident. Each dot is a student.</p>
+                      <ConfidenceScatterChart submissions={submissions} totalQuestions={quiz?.questions?.length || 0} />
+                    </motion.div>
+                  </div>
                 )}
 
                 {/* Toss-up questions (collapsible) */}
@@ -568,26 +786,33 @@ export default function TeacherResponsesPage({ user }) {
             {/* ════════ QUESTION DRILL ════════ */}
             {viewMode === "question" && (
               <div className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
-                <div className="mb-5 flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => setSelectedQuestionIndex((p) => Math.max(0, p - 1))}
-                    disabled={selectedQuestionIndex <= 0}
-                    className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40 hover:bg-gray-50"
-                  >← Prev</button>
-                  <button
-                    onClick={() => setSelectedQuestionIndex((p) => Math.min((quiz?.questions?.length || 1) - 1, p + 1))}
-                    disabled={selectedQuestionIndex >= (quiz?.questions?.length || 1) - 1}
-                    className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40 hover:bg-gray-50"
-                  >Next →</button>
+
+                <div className="mb-5 flex justify-between flex-wrap items-center gap-2">
+                
+
                   <div className="flex flex-wrap gap-1">
                     {(quiz?.questions || []).map((_, i) => (
                       <button
                         key={i}
                         onClick={() => setSelectedQuestionIndex(i)}
-                        className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${i === selectedQuestionIndex ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
+                        className={`rounded px-2.5 py-2 text-xs font-medium transition-colors ${i === selectedQuestionIndex ? "bg-blue-600 text-white" : "border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
                       >Q{i + 1}</button>
                     ))}
                   </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSelectedQuestionIndex((p) => Math.max(0, p - 1))}
+                      disabled={selectedQuestionIndex <= 0}
+                      className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40 hover:bg-gray-50"
+                    >← Prev</button>
+                    <button
+                      onClick={() => setSelectedQuestionIndex((p) => Math.min((quiz?.questions?.length || 1) - 1, p + 1))}
+                      disabled={selectedQuestionIndex >= (quiz?.questions?.length || 1) - 1}
+                      className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:opacity-40 hover:bg-gray-50"
+                    >Next →</button>
+                  </div>
+                  
                 </div>
 
                 <AnimatePresence mode="wait">
@@ -630,8 +855,36 @@ export default function TeacherResponsesPage({ user }) {
                             );
                           })}
                         </div>
+                        {/* AI distractor analysis */}
+                        {rendered?.questionInsights && (() => {
+                          const qi = rendered.questionInsights.find(
+                            (x) => x.questionLabel === `Q${selectedQuestionIndex + 1}`
+                          );
+                          if (!qi) return null;
+                          return (
+                            <div className="rounded-lg border border-violet-200 bg-violet-50 p-4">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-violet-700">AI Insight</p>
+                              {qi.topMisconception && (
+                                <p className="text-sm text-gray-700">
+                                  <span className="font-medium text-gray-900">Top misconception:</span> {qi.topMisconception}
+                                </p>
+                              )}
+                              {qi.distractorAnalysis && (
+                                <p className="mt-1.5 text-sm text-gray-700">
+                                  <span className="font-medium text-gray-900">Why the wrong answer looks right:</span> {qi.distractorAnalysis}
+                                </p>
+                              )}
+                              {qi.teacherMove && (
+                                <div className="mt-3 rounded border border-violet-200 bg-white px-3 py-2 text-xs text-gray-700">
+                                  <span className="font-semibold text-violet-700">Teacher move:</span> {qi.teacherMove}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         <div className="grid gap-3 sm:grid-cols-2">
-                          {[{ label: "Got It Right", color: "emerald", students: studentsByQuestion.correct }, { label: "Got It Wrong", color: "red", students: studentsByQuestion.incorrect }].map(({ label, color, students }) => (
+                          {[{ label: "ANSWERED CORRECTLY", color: "emerald", students: studentsByQuestion.correct }, { label: "ANSWERED INCORRECTLY", color: "red", students: studentsByQuestion.incorrect }].map(({ label, color, students }) => (
                             <div key={label} className={`rounded border border-${color}-200 bg-${color}-50 p-3`}>
                               <p className={`mb-2 text-xs font-semibold uppercase tracking-wide text-${color}-700`}>{label}</p>
                               <div className="flex flex-wrap gap-1">
@@ -657,18 +910,26 @@ export default function TeacherResponsesPage({ user }) {
                 <div className="rounded-lg border border-gray-200 bg-white p-3">
                   <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Students</p>
                   <div className="space-y-1">
-                    {submissions.map((s) => (
-                      <button
-                        key={s.id}
-                        onClick={() => setSelectedStudentId(s.id)}
-                        className={`w-full rounded px-3 py-2 text-left transition-colors ${selectedStudentId === s.id ? "bg-blue-600 text-white" : "text-gray-800 hover:bg-gray-50"}`}
-                      >
-                        <p className="text-sm font-medium">{s.studentName || "Unnamed"}</p>
-                        <p className={`text-xs ${selectedStudentId === s.id ? "text-blue-200" : "text-gray-400"}`}>
-                          {s.score ?? 0} / {quiz?.questions?.length || 0}
-                        </p>
-                      </button>
-                    ))}
+                    {submissions.map((s) => {
+                      const isSelected = selectedStudentId === s.id;
+                      const scorePct = quiz?.questions?.length ? ((s.score || 0) / quiz.questions.length) * 100 : 0;
+                      const dotColor = scorePct >= 70 ? "bg-emerald-500" : scorePct >= 40 ? "bg-amber-400" : "bg-red-500";
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedStudentId(s.id)}
+                          className={`w-full rounded px-3 py-2 text-left transition-colors ${isSelected ? "bg-blue-600 text-white" : "text-gray-800 hover:bg-gray-50"}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${isSelected ? "bg-blue-300" : dotColor}`} />
+                            <p className="text-sm font-medium truncate">{s.studentName || "Unnamed"}</p>
+                          </div>
+                          <p className={`ml-4 text-xs ${isSelected ? "text-blue-200" : "text-gray-400"}`}>
+                            {s.score ?? 0} / {quiz?.questions?.length || 0} · {Math.round(scorePct)}%
+                          </p>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -682,22 +943,200 @@ export default function TeacherResponsesPage({ user }) {
                           <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Student</p>
                           <p className="mt-1 text-xl font-semibold text-gray-900">{selectedSubmission.studentName}</p>
                           <p className="text-sm text-gray-500">{selectedSubmission.score ?? 0} / {quiz?.questions?.length || 0} correct</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {percentileMap[selectedStudentId] != null && (
+                              <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600">
+                                {percentileMap[selectedStudentId]}th percentile
+                              </span>
+                            )}
+                            {(() => {
+                              const cal = getCalibration(selectedSubmission.answers);
+                              if (!cal) return null;
+                              const colors = { amber: "border-amber-200 bg-amber-50 text-amber-700", blue: "border-blue-200 bg-blue-50 text-blue-700", emerald: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+                              return (
+                                <span className={`rounded border px-2 py-0.5 text-xs font-medium ${colors[cal.color]}`}>
+                                  {cal.label}
+                                </span>
+                              );
+                            })()}
+                          </div>
                         </div>
+
+                        {/* ── AI Student Plan ──────────────────────────────── */}
+                        {(() => {
+                          const aiPlan = (rendered?.studentActions || []).find(
+                            (a) => a.studentName === selectedSubmission.studentName
+                          );
+                          if (!aiPlan) {
+                            return (
+                              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 text-center">
+                                <p className="text-xs text-gray-400">No AI plan yet.</p>
+                                <Link
+                                  to={`/dashboard/quiz/${quizId}/insights`}
+                                  className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+                                >
+                                  Generate AI Insights →
+                                </Link>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 space-y-4">
+                              {/* Plan header */}
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">AI Student Plan</p>
+                                <div className="flex flex-wrap gap-2">
+                                  <span className={`rounded px-2 py-0.5 text-xs font-medium ${aiPlan.needsSupport ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                    {aiPlan.needsSupport ? "Needs Support" : "On Track"}
+                                  </span>
+                                  {aiPlan.riskLevel && (
+                                    <span className="rounded border border-gray-200 bg-white px-2 py-0.5 text-xs font-medium text-gray-600 capitalize">
+                                      {aiPlan.riskLevel} risk
+                                    </span>
+                                  )}
+                                  {aiPlan.readyToMoveOn != null && (
+                                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${aiPlan.readyToMoveOn ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                                      {aiPlan.readyToMoveOn ? "Ready to move on" : "Not ready"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Conversation opener */}
+                              {aiPlan.conversationStarter && (
+                                <div className="rounded-lg border border-blue-200 bg-white px-4 py-3">
+                                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-600">Say to this student:</p>
+                                  <p className="text-sm italic leading-relaxed text-gray-700">"{aiPlan.conversationStarter}"</p>
+                                </div>
+                              )}
+
+                              {/* Action plan */}
+                              {aiPlan.actionPlan && (
+                                <p className="text-sm leading-relaxed text-gray-700">{aiPlan.actionPlan}</p>
+                              )}
+
+                              {/* Misconceptions + Strengths */}
+                              {(aiPlan.misconceptionProfile?.length > 0 || aiPlan.strengthAreas?.length > 0) && (
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  {aiPlan.misconceptionProfile?.length > 0 && (
+                                    <div>
+                                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-red-600">Misconceptions</p>
+                                      <div className="space-y-1">
+                                        {aiPlan.misconceptionProfile.map((m, i) => (
+                                          <div key={i} className="flex items-start gap-1.5 rounded border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
+                                            <span className="mt-0.5 shrink-0">⚠</span> {m}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {aiPlan.strengthAreas?.length > 0 && (
+                                    <div>
+                                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-600">Strengths</p>
+                                      <div className="space-y-1">
+                                        {aiPlan.strengthAreas.map((s, i) => (
+                                          <div key={i} className="flex items-start gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700">
+                                            <span className="mt-0.5 shrink-0">✓</span> {s}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Focus areas + priority questions */}
+                              <div className="flex flex-wrap gap-4">
+                                {aiPlan.focusAreas?.length > 0 && (
+                                  <div>
+                                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Focus Areas</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {aiPlan.focusAreas.map((area, i) => (
+                                        <span key={i} className="rounded border border-gray-200 bg-white px-2 py-0.5 text-xs font-medium text-gray-700">{area}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {aiPlan.priorityQuestions?.length > 0 && (
+                                  <div>
+                                    <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Review First</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {aiPlan.priorityQuestions.map((q, i) => (
+                                        <span key={i} className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">{q}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── Performance flags ────────────────────────────── */}
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          {[
+                            { label: "Correct Answers", value: selectedSubmission.score ?? 0, sub: `out of ${quiz?.questions?.length || 0}`, color: "gray" },
+                            { label: "High Conf. Wrong", value: (selectedSubmission.answers || []).filter((a) => !a.isCorrect && Number(a.confidence) >= 4).length, sub: "overconfident mistakes", color: "red" },
+                            { label: "Low Conf. Correct", value: (selectedSubmission.answers || []).filter((a) => a.isCorrect && Number(a.confidence) <= 2).length, sub: "lucky guesses", color: "amber" },
+                          ].map((c) => (
+                            <div key={c.label} className="rounded border border-gray-200 bg-white p-4">
+                              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{c.label}</p>
+                              <p className={`mt-1 text-2xl font-semibold ${c.color === "red" && c.value > 0 ? "text-red-600" : c.color === "amber" && c.value > 0 ? "text-amber-600" : "text-gray-900"}`}>{c.value}</p>
+                              <p className="mt-0.5 text-xs text-gray-400">{c.sub}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* ── Question breakdown ───────────────────────────── */}
                         {(quiz?.questions || []).map((q, i) => {
                           const a = selectedSubmission.answers?.[i];
-                          const chosen = typeof a?.chosenIndex === "number" ? q.options[a.chosenIndex] : "No answer";
-                          const correct = q.options[q.correctAnswerIndex];
                           return (
-                            <div key={i} className="rounded border border-gray-200 bg-gray-50 p-4">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="font-medium text-gray-900">{i + 1}. {q.text}</p>
-                                <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${a?.isCorrect ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
+                            <div key={i} className="rounded-lg border border-gray-200 bg-white p-5">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Question {i + 1}</p>
+                                <span className={`rounded px-2 py-0.5 text-xs font-medium ${a?.isCorrect ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
                                   {a?.isCorrect ? "Correct" : "Incorrect"}
                                 </span>
                               </div>
-                              <p className="mt-2 text-sm text-gray-600">Selected: <span className="font-medium text-gray-800">{chosen}</span></p>
-                              {!a?.isCorrect && <p className="text-sm text-gray-600">Correct: <span className="font-medium text-emerald-700">{correct}</span></p>}
-                              <p className="mt-1 text-xs text-gray-400">Confidence: {a?.confidence ?? "—"}/5 · Time: {formatSeconds(a?.timeSpentSeconds ?? 0)}</p>
+                              <p className="mt-2 font-medium text-gray-900">{q.text}</p>
+
+                              <div className="mt-3 space-y-1.5">
+                                {q.options.map((option, oi) => {
+                                  const isChosen = a?.chosenIndex === oi;
+                                  const isCorrect = q.correctAnswerIndex === oi;
+                                  return (
+                                    <div
+                                      key={oi}
+                                      className={`rounded border px-3 py-2 text-sm ${
+                                        isCorrect ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                        : isChosen ? "border-red-300 bg-red-50 text-red-700"
+                                        : "border-gray-200 bg-white text-gray-700"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span>
+                                          <span className="mr-2 font-mono text-xs opacity-50">{String.fromCharCode(65 + oi)}</span>
+                                          {option}
+                                        </span>
+                                        <span className="shrink-0 text-xs font-medium">
+                                          {isCorrect && "✓ Correct"}
+                                          {isChosen && !isCorrect && "Student's answer"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="mt-3 flex flex-wrap gap-4 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                <span><span className="font-medium text-gray-700">Time:</span> {formatSeconds(a?.timeSpentSeconds ?? 0)}</span>
+                                <span><span className="font-medium text-gray-700">Confidence:</span> {a?.confidence ?? "—"}/5</span>
+                              </div>
+                              {q.aiRationale && (
+                                <p className="mt-2 text-xs text-gray-400">
+                                  <span className="font-medium">Rationale:</span> {q.aiRationale}
+                                </p>
+                              )}
                             </div>
                           );
                         })}
@@ -708,20 +1147,81 @@ export default function TeacherResponsesPage({ user }) {
               </div>
             )}
 
-            {/* ════════ STUDENT PLANS ════════ */}
-            {viewMode === "studentplan" && (
+            {/* ════════ STUDY GUIDE ════════ */}
+            {viewMode === "studyguide" && (
+              <div>
+                {!rendered?.studyGuide ? (
+                  <div className="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center">
+                    <p className="font-semibold text-gray-800">No Study Guide Yet</p>
+                    <p className="mt-1 text-sm text-gray-500 max-w-md mx-auto">
+                      Generate an AI analysis to create a shareable study guide for your students.
+                    </p>
+                    <button
+                      onClick={handleGenerate}
+                      disabled={generating || !submissions.length}
+                      className="mt-5 inline-flex items-center gap-2 rounded bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500"
+                    >
+                      <FiRefreshCw className={generating ? "animate-spin" : ""} />
+                      {generating ? "Analyzing…" : "Generate Study Guide"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="rounded-lg border border-gray-200 bg-white p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">Study Guide</h3>
+                          {rendered.studyGuide.title && (
+                            <p className="mt-0.5 text-lg font-semibold text-gray-900">{rendered.studyGuide.title}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/studyguide/${quizId}`); toast.success("Link copied!"); }}
+                            className="inline-flex items-center gap-1.5 rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            <FiShare2 /> Copy Link
+                          </button>
+                          <Link
+                            to={`/studyguide/${quizId}`}
+                            target="_blank"
+                            className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                          >
+                            Open →
+                          </Link>
+                        </div>
+                      </div>
+                      {rendered.studyGuide.overview && (
+                        <p className="mt-3 text-sm leading-relaxed text-gray-600">{rendered.studyGuide.overview}</p>
+                      )}
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {(rendered.studyGuide.sections || []).map((section, i) => (
+                        <div key={i} className="rounded-lg border border-gray-200 bg-white p-5">
+                          <p className="font-semibold text-gray-900">{section.topic}</p>
+                          <p className="mt-1 text-xs text-gray-500">{section.whyItMatters}</p>
+                          {(section.practiceTips || []).length > 0 && (
+                            <ul className="mt-3 space-y-1.5">
+                              {section.practiceTips.map((tip, j) => (
+                                <li key={j} className="flex items-start gap-1.5 text-xs text-gray-600">
+                                  <span className="mt-0.5 shrink-0 text-emerald-500">✓</span> {tip}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Student Plans tab removed — content merged into Individual tab */}
+            {false && (
               <div>
                 {!rendered ? (
-                  <div className="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center">
-                    <p className="font-semibold text-gray-800">AI Insights Not Generated</p>
-                    <p className="mt-1 text-sm text-gray-500">Generate AI insights first to see per-student action plans sorted by who needs the most support.</p>
-                    <Link
-                      to={`/dashboard/quiz/${quizId}/insights`}
-                      className="mt-4 inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                    >
-                      Go to AI Insights →
-                    </Link>
-                  </div>
+                  <div />
                 ) : (
                   <div className="grid gap-4 md:grid-cols-[260px_1fr]">
                     {/* Student list */}
@@ -848,30 +1348,53 @@ export default function TeacherResponsesPage({ user }) {
                               <div className="space-y-3">
                                 {(quiz?.questions || []).map((q, i) => {
                                   const a = selectedPlanStudent.answers?.[i];
-                                  const chosen = typeof a?.chosenIndex === "number" ? q.options[a.chosenIndex] : "Not answered";
-                                  const correct = q.options[q.correctAnswerIndex];
                                   return (
-                                    <div key={i} className={`rounded border p-4 ${a?.isCorrect ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-                                      <div className="flex items-start justify-between gap-2">
-                                        <p className="font-medium text-gray-900">{i + 1}. {q.text}</p>
-                                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${a?.isCorrect ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
+                                    <div key={i} className="rounded-lg border border-gray-200 bg-white p-4">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Question {i + 1}</p>
+                                        <span className={`rounded px-2 py-0.5 text-xs font-medium ${a?.isCorrect ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
                                           {a?.isCorrect ? "Correct" : "Incorrect"}
                                         </span>
                                       </div>
-                                      <div className="mt-2 flex flex-wrap gap-4 text-sm">
-                                        <span className="text-gray-600">
-                                          Selected: <span className={`font-medium ${a?.isCorrect ? "text-emerald-800" : "text-red-700"}`}>{chosen}</span>
-                                        </span>
-                                        {!a?.isCorrect && (
-                                          <span className="text-gray-600">
-                                            Answer: <span className="font-medium text-emerald-800">{correct}</span>
-                                          </span>
-                                        )}
+                                      <p className="mt-2 font-medium text-gray-900">{q.text}</p>
+
+                                      <div className="mt-3 space-y-1.5">
+                                        {q.options.map((option, oi) => {
+                                          const isChosen = a?.chosenIndex === oi;
+                                          const isCorrect = q.correctAnswerIndex === oi;
+                                          return (
+                                            <div
+                                              key={oi}
+                                              className={`rounded border px-3 py-2 text-sm ${
+                                                isCorrect ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                                : isChosen ? "border-red-300 bg-red-50 text-red-700"
+                                                : "border-gray-200 bg-white text-gray-700"
+                                              }`}
+                                            >
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span>
+                                                  <span className="mr-2 font-mono text-xs opacity-50">{String.fromCharCode(65 + oi)}</span>
+                                                  {option}
+                                                </span>
+                                                <span className="shrink-0 text-xs font-medium">
+                                                  {isCorrect && "✓ Correct"}
+                                                  {isChosen && !isCorrect && "Student's answer"}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
                                       </div>
-                                      <div className="mt-1.5 flex flex-wrap gap-3 text-xs text-gray-500">
-                                        <span>Confidence: {a?.confidence ?? "—"}/5</span>
-                                        <span>Time: {formatSeconds(a?.timeSpentSeconds ?? 0)}</span>
+
+                                      <div className="mt-3 flex flex-wrap gap-4 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                        <span><span className="font-medium text-gray-700">Time:</span> {formatSeconds(a?.timeSpentSeconds ?? 0)}</span>
+                                        <span><span className="font-medium text-gray-700">Confidence:</span> {a?.confidence ?? "—"}/5</span>
                                       </div>
+                                      {q.aiRationale && (
+                                        <p className="mt-2 text-xs text-gray-400">
+                                          <span className="font-medium">Rationale:</span> {q.aiRationale}
+                                        </p>
+                                      )}
                                     </div>
                                   );
                                 })}
