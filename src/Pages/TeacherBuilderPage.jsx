@@ -10,10 +10,9 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import toast from "react-hot-toast";
 import { signOutTeacher } from "../lib/auth";
-import { db, storage } from "../lib/firebase";
+import { db } from "../lib/firebase";
 import { extractPdfText } from "../lib/pdf";
 import { generateQuestionsWithGemini } from "../lib/gemini";
 import { useEffect } from "react";
@@ -177,23 +176,12 @@ export default function TeacherBuilderPage({ user }) {
       setIsSaving(true);
       setStatus("Saving quiz...");
 
-      let sourceUrl = "";
-      if (sourceFile) {
-        const storageRef = ref(
-          storage,
-          `quiz-sources/${user.uid}/${Date.now()}-${sourceFile.name}`
-        );
-        await uploadBytes(storageRef, sourceFile);
-        sourceUrl = await getDownloadURL(storageRef);
-      }
-
       const basePayload = {
         ownerId: user.uid,
         userId: user.uid,
         teacherId: user.uid,
         teacherName: user.displayName || user.email || "Teacher",
         title: title.trim(),
-        sourceUrl,
         questions,
         status: "draft",
         teacherNotes: teacherNotes.trim(),
@@ -508,9 +496,6 @@ export default function TeacherBuilderPage({ user }) {
                   >
                     {isGenerating ? "Generating..." : hasGenerated ? "Already generated" : "Generate Questions"}
                   </button>
-                  <span className="text-xs text-gray-500">
-                    API key: {geminiApiKey ? "✓ Loaded" : "✗ Missing"}
-                  </span>
                 </div>
                 {status && (
                   <p className="text-xs text-gray-600">{isLoadingQuiz ? "Loading quiz..." : status}</p>
