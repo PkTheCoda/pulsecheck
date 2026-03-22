@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 export default function StudyGuidePage() {
   const { quizId } = useParams();
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  usePageTitle(guide?.quizTitle ? `${guide.quizTitle} — Study Guide` : "Study Guide");
 
   useEffect(() => {
     async function loadGuide() {

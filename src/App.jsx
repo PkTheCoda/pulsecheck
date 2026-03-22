@@ -10,6 +10,7 @@ import TeacherResponsesPage from "./Pages/TeacherResponsesPage";
 import TeacherInsightsPage from "./Pages/TeacherInsightsPage";
 import StudyGuidePage from "./Pages/StudyGuidePage";
 import Homepage from "./Pages/Homepage";
+import AboutPage from "./Pages/AboutPage";
 import { auth } from "./lib/firebase";
 
 
@@ -44,6 +45,7 @@ function App() {
         <Route path="/dashboard/quiz/:quizId/insights" element={<TeacherInsightsPage user={user} />} />
         <Route path="/quiz/:quizId" element={<StudentQuizPage />} />
         <Route path="/studyguide/:quizId" element={<StudyGuidePage />} />
+        <Route path="/about" element={<AboutPage />} />
       </Routes>
     </BrowserRouter>
   );

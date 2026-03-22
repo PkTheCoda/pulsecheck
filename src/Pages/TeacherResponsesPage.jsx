@@ -10,6 +10,8 @@ import toast from "react-hot-toast";
 import { FiRefreshCw, FiShare2 } from "react-icons/fi";
 import { db } from "../lib/firebase";
 import { generateInsightsWithGemini } from "../lib/gemini";
+import SiteHeader from "../Components/SiteHeader";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -428,6 +430,7 @@ export default function TeacherResponsesPage({ user }) {
 
   // ─── early returns ────────────────────────────────────────────────────────
 
+  usePageTitle(quiz?.title || "Responses");
   const selectedSubmission = submissions.find((s) => s.id === selectedStudentId);
   if (!user) return <Navigate to="/signin" replace />;
   if (loading) return <LoadingSpinner />;
@@ -442,6 +445,9 @@ export default function TeacherResponsesPage({ user }) {
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
+      <SiteHeader>
+        <Link to="/dashboard" className="text-sm text-gray-500 transition-colors hover:text-gray-900">← Dashboard</Link>
+      </SiteHeader>
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
 
         {/* Header */}
@@ -470,7 +476,6 @@ export default function TeacherResponsesPage({ user }) {
               >
                 Export CSV
               </button>
-              <Link to="/dashboard" className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">← Dashboard</Link>
             </div>
           </div>
 
@@ -538,48 +543,69 @@ export default function TeacherResponsesPage({ user }) {
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.2 }}
-                      className={`rounded-lg border p-5 ${pulseBg}`}
+                      className={`rounded-lg border p-6 ${pulseBg}`}
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-6">
+                      {/* Score row */}
+                      <div className="flex flex-wrap items-end gap-4">
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Class Pulse</p>
-                          <p className={`mt-1 text-5xl font-bold tabular-nums ${pulseColor}`}>{pulse}</p>
-                          <p className="mt-0.5 text-sm font-medium text-gray-600">{pulseLabel}</p>
-                          <p className="mt-1 text-xs text-gray-400">Synthesizes accuracy, calibration, and outliers</p>
+                          <p className={`mt-1 text-5xl font-bold tabular-nums leading-none ${pulseColor}`}>{pulse}</p>
                         </div>
-                        <div className="flex-1" style={{ minWidth: 160 }}>
-                          <div className="h-3 w-full overflow-hidden rounded-full bg-white/70">
-                            <motion.div
-                              className={`h-3 rounded-full ${barColor}`}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${pulse}%` }}
-                              transition={{ duration: 0.8, ease: "easeOut" }}
-                            />
-                          </div>
-                          <div className="mt-1.5 flex justify-between text-xs text-gray-400">
-                            <span>0 · Reteach</span>
-                            <span>100 · Advance</span>
-                          </div>
+                        <div className="mb-1">
+                          <p className="text-sm font-medium text-gray-700">{pulseLabel}</p>
+                          <p className="mt-0.5 text-xs text-gray-400">Accuracy · Calibration · Outliers</p>
                         </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/60">
+                        <motion.div
+                          className={`h-2 rounded-full ${barColor}`}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pulse}%` }}
+                          transition={{ duration: 0.8, ease: "easeOut" }}
+                        />
+                      </div>
+                      <div className="mt-1 flex justify-between text-xs text-gray-400">
+                        <span>0</span>
+                        <span>100</span>
                       </div>
 
                       {/* AI Class Snapshot inline */}
                       {rendered?.classSummary && (
-                        <div className="mt-4 border-t border-current/10 pt-4 space-y-2">
-                          <p className="border-l-2 border-blue-500 pl-3 text-sm font-medium text-gray-800">
+                        <div className="mt-5 space-y-4 border-t border-current/10 pt-5">
+                          <p className="text-sm leading-relaxed text-gray-700">
                             {rendered.classSummary.headline}
                           </p>
+
                           {rendered.classSummary.readinessVerdict && (
-                            <p className="pl-3 text-xs text-gray-500">{rendered.classSummary.readinessVerdict}</p>
+                            <p className="text-xs text-gray-500">{rendered.classSummary.readinessVerdict}</p>
                           )}
-                          <div className="flex flex-wrap gap-1.5 pl-3">
-                            {(rendered.classSummary.priorityConcepts || []).map((c, i) => (
-                              <span key={i} className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{c}</span>
-                            ))}
-                            {(rendered.classSummary.reteachNow || []).map((r, i) => (
-                              <span key={i} className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-700">⚠ {r}</span>
-                            ))}
-                          </div>
+
+                          {(rendered.classSummary.priorityConcepts || []).length > 0 && (
+                            <div>
+                              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Focus Areas</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(rendered.classSummary.priorityConcepts || []).map((c, i) => (
+                                  <span key={i} className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">{c}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {(rendered.classSummary.reteachNow || []).length > 0 && (
+                            <div>
+                              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Reteach Now</p>
+                              <div className="flex flex-col gap-1">
+                                {(rendered.classSummary.reteachNow || []).map((r, i) => (
+                                  <span key={i} className="flex items-center gap-1.5 text-xs text-red-700">
+                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" />
+                                    {r}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </motion.div>

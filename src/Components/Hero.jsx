@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { FiArrowRight, FiBarChart2, FiZap, FiUser } from "react-icons/fi";
+import SiteHeader from "./SiteHeader";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 const features = [
   {
@@ -29,42 +31,33 @@ const mockBars = [
 ];
 
 export default function Hero({ user }) {
+  usePageTitle(null);
   return (
     <div className="min-h-screen bg-white font-sans text-gray-900">
 
       {/* ── Nav ─────────────────────────────────────────────────────────────── */}
-      <nav className="sticky top-0 z-10 border-b border-gray-200 bg-white/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded bg-blue-600">
-              <FiBarChart2 className="h-3.5 w-3.5 text-white" />
-            </span>
-            <span className="font-outfit text-base font-semibold tracking-tight text-gray-900">PulseCheck</span>
-          </div>
-          <div className="flex items-center gap-4">
-            {user ? (
-              <Link
-                to="/dashboard"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-              >
-                Dashboard <FiArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            ) : (
-              <>
-                <Link to="/signin" className="text-sm text-gray-500 transition-colors hover:text-gray-900">
-                  Sign in
-                </Link>
-                <Link
-                  to="/signin"
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-                >
-                  Get started
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      </nav>
+      <SiteHeader>
+        {user ? (
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+          >
+            Dashboard <FiArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        ) : (
+          <>
+            <Link to="/signin" className="text-sm text-gray-500 transition-colors hover:text-gray-900">
+              Sign in
+            </Link>
+            <Link
+              to="/signin"
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            >
+              Get started
+            </Link>
+          </>
+        )}
+      </SiteHeader>
 
       {/* ── Hero ────────────────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-6 pt-20 pb-16 lg:pt-28 lg:pb-24">

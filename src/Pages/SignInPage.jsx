@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { signInWithGoogle } from "../lib/auth";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 export default function SignInPage({ user }) {
+  usePageTitle("Sign In");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 

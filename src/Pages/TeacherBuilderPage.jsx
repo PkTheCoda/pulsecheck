@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import {
   addDoc,
   arrayUnion,
@@ -17,6 +17,8 @@ import { db, storage } from "../lib/firebase";
 import { extractPdfText } from "../lib/pdf";
 import { generateQuestionsWithGemini } from "../lib/gemini";
 import { useEffect } from "react";
+import SiteHeader from "../Components/SiteHeader";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 function makeAccessCode() {
   return `${Math.floor(100000 + Math.random() * 900000)}`;
@@ -59,6 +61,7 @@ function createEmptyQuestion() {
 
 export default function TeacherBuilderPage({ user }) {
   const { quizId } = useParams();
+  const navigate = useNavigate();
   const isEditing = Boolean(quizId);
   const [title, setTitle] = useState("");
   const [password, setPassword] = useState("");
@@ -206,8 +209,8 @@ export default function TeacherBuilderPage({ user }) {
         await updateDoc(doc(db, "quizzes", quizId), basePayload);
         const liveLink = `${window.location.origin}/quiz/${quizId}`;
         await updateDoc(doc(db, "quizzes", quizId), { liveLink });
-        setStatus(`Updated draft quiz: ${quizId}`);
         toast.success("Quiz updated.");
+        navigate("/dashboard");
       } else {
         const accessCode = makeAccessCode();
         const docRef = await addDoc(collection(db, "quizzes"), {
@@ -231,8 +234,8 @@ export default function TeacherBuilderPage({ user }) {
           },
           { merge: true }
         );
-        setStatus(`Saved draft quiz. quizId: ${docRef.id}, accessCode: ${accessCode}`);
-        toast.success("Draft saved.");
+        toast.success("Quiz saved.");
+        navigate("/dashboard");
       }
     } catch (error) {
       setStatus(error.message || "Failed to save quiz.");
@@ -314,38 +317,37 @@ export default function TeacherBuilderPage({ user }) {
     "w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
   const labelBase = "mb-1 block text-xs font-medium uppercase tracking-wide text-gray-600";
 
+  usePageTitle(isEditing ? (title || "Edit Quiz") : "New Quiz");
+
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
-      <div className="mx-auto max-w-4xl px-6 py-8">
-        {/* Header + Sticky Tabs */}
-        <div className="sticky top-0 z-10 -mx-6 -mt-2 bg-gray-100 px-6 pb-2 pt-2">
-          <header className="mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
-              PulseCheck
+      <SiteHeader>
+  
+        <Link
+          to="/dashboard"
+          className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        >
+          My Quizzes
+        </Link>
+        <button
+          onClick={signOutTeacher}
+          className="rounded border border-gray-800 bg-gray-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+        >
+          Sign out
+        </button>
+      </SiteHeader>
+
+      <div className="mx-auto max-w-4xl px-6 py-6">
+        {/* Sticky Tabs */}
+        <div className="sticky top-[53px] z-10 -mx-6 bg-gray-100 px-6 pb-2 pt-3">
+          <div className="mb-3">
+            <h1 className="text-lg font-semibold text-gray-900">
+              {isEditing ? `Edit: ${title || "Quiz"}` : "New Quiz"}
             </h1>
-            <p className="mt-0.5 text-sm text-gray-500">
-              {isEditing ? "Edit your quiz and update the live version." : "Build fast checks from source files with AI."}
+            <p className="text-xs text-gray-500">
+              {isEditing ? "Update the live version anytime." : "Build questions manually or generate them from source material."}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500">
-              {user.displayName || user.email}
-            </span>
-            <Link
-              to="/dashboard"
-              className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
-              My Quizzes
-            </Link>
-            <button
-              onClick={signOutTeacher}
-              className="rounded border border-gray-800 bg-gray-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800"
-            >
-              Sign out
-            </button>
-          </div>
-        </header>
 
           {/* Tabs + Save */}
           <div className="flex items-end justify-between border-b border-gray-200 bg-gray-100">
@@ -536,14 +538,22 @@ export default function TeacherBuilderPage({ user }) {
           <div className="space-y-6">
             {questions.length === 0 ? (
               <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
-                <p className="text-sm text-gray-500">No questions yet.</p>
-                <p className="mt-1 text-xs text-gray-400">Add source content and generate questions from the Details tab.</p>
-                <button
-                  onClick={() => setActiveTab("details")}
-                  className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
-                >
-                  Go to Details →
-                </button>
+                <p className="text-sm font-medium text-gray-700">No questions yet</p>
+                <p className="mt-1 text-xs text-gray-400">Add questions manually, or generate them from source material in the Details tab.</p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    onClick={addQuestion}
+                    className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    + Add Question Manually
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("details")}
+                    className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                  >
+                    Generate with AI →
+                  </button>
+                </div>
               </div>
             ) : (
               <>
